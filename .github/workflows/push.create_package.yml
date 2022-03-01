@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - master
+      - main
       - uat
       - dev 
     paths:
@@ -42,7 +43,7 @@ jobs:
           packageName=$(cat sfdx-project.json | jq '.packageDirectories | map(select(.package != null))[0].package' -r)
 
           # ! full package creation in master branch, quick package on uat and dev
-          if [ ${{ github.ref_name }} == "master" ]; then
+          if [ ${{ github.ref_name }} == "master" ] || [ ${{ github.ref_name }} == "main" ]; then
             sfdx force:package:version:create --definitionfile config/project-scratch-def.json --package $packageName --installationkey ${{ secrets.PACKAGE_KEY }} --wait 45 --codecoverage --json | tee output
           else
             sfdx force:package:version:create --definitionfile config/project-scratch-def.json --package $packageName --installationkey ${{ secrets.PACKAGE_KEY }} --wait 20 --skipvalidation --branch ${{ github.ref_name }} --json | tee output
@@ -70,7 +71,7 @@ jobs:
 
   system-integration-testing:
     name: SIT
-    if: github.ref_name == 'master'
+    if: github.ref_name == 'master' || github.ref_name == 'main'
     needs: [create-package]
     uses: ./.github/workflows/subflow.deploy_package.yml
     with:
@@ -118,7 +119,7 @@ jobs:
   create-release:
     name: Create Release
     needs: [create-package, system-integration-testing]
-    if: always() && github.ref_name == 'master'
+    if: always() && (github.ref_name == 'master' || github.ref_name == 'main')
     runs-on: ubuntu-latest
     steps:
       # Checkout source code

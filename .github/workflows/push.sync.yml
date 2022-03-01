@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - master
+      - main
 jobs:
   sync:
     name: Sync
@@ -22,10 +23,10 @@ jobs:
         uses: tretuna/sync-branches@1.4.0
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          FROM_BRANCH: master
+          FROM_BRANCH: ${{ github.ref_name }}
           TO_BRANCH: ${{ matrix.branch }}
-          PULL_REQUEST_TITLE: '[CI] Auto-merge from master → ${{ matrix.branch }}'
-          PULL_REQUEST_BODY: '[CI] Auto-merge from master → ${{ matrix.branch }}'
+          PULL_REQUEST_TITLE: '[CI] Auto-merge from ${{ github.ref_name }} → ${{ matrix.branch }}'
+          PULL_REQUEST_BODY: '[CI] Auto-merge from ${{ github.ref_name }} → ${{ matrix.branch }}'
 
       # Merge PR
       - name: Merge pull request

@@ -38,7 +38,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # Checkout source code
-      - name: Checkout source code from master
+      - name: Checkout source code
         uses: actions/checkout@v2
 
       # Authorize SFDX

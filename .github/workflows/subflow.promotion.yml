@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # Checkout source code
-      - name: Checkout source code from master
+      - name: Checkout source code
         uses: actions/checkout@v2
 
       # Install SFDX
@@ -56,7 +56,7 @@ jobs:
     if: needs.check-promotion.outputs.shouldPromote
     steps:
       # Checkout source code
-      - name: Checkout source code from master
+      - name: Checkout source code
         uses: actions/checkout@v2
 
       # Install SFDX
@@ -83,7 +83,7 @@ jobs:
     if: needs.check-promotion.outputs.shouldPromote
     steps:
       # Checkout source code
-      - name: Checkout source code from master
+      - name: Checkout source code
         uses: actions/checkout@v2
         with:
           persist-credentials: false
@@ -128,7 +128,7 @@ jobs:
     if: needs.check-promotion.outputs.shouldPromote
     steps:
       # Checkout source code
-      - name: Checkout source code from master
+      - name: Checkout source code
         uses: actions/checkout@v2
         with:
           persist-credentials: true # ! set to true to be able to checkout correctly
