@@ -1,0 +1,79 @@
+name: "[MANUAL] Deployment Tool"
+on:
+  workflow_dispatch:
+    inputs:
+      org:
+        type: choice
+        description: "Environment"
+        required: true
+        options: [Production, UAT, Dev]
+      packageId:
+        description: "Package ID"
+jobs:
+
+  promote-package:
+    name: Promote
+    if: github.event.inputs.org == 'Production'
+    uses: ./.github/workflows/subflow.promotion.yml
+    with:
+      PACKAGE_ID: ${{ github.event.inputs.packageId }}
+    secrets:
+      SFDX_URL_DEVHUB: ${{ secrets.SFDX_URL_DEVHUB }}
+      DEPLOYMENT_PAT: ${{ secrets.DEPLOYMENT_PAT }}
+
+  slack-post:
+    name: Slack Post
+    needs: promote-package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post to Slack
+        uses: slackapi/slack-github-action@v1.18.0
+        with:
+          payload: |
+            {"blocks":[{"type":"header","text":{"type":"plain_text","text":"🏃 Deployment Startet","emoji":true}},{"type":"section","fields":[{"type":"mrkdwn","text":"*Repo:*\n<https://github.com/${{ github.repository }}|${{ github.repository }}>"},{"type":"mrkdwn","text":"*Startet av:*\n<https://github.com/${{ github.actor }}|${{ github.actor }}>"}]},{"type":"section","fields":[{"type":"mrkdwn","text":"*Ferdig:*\nOm ~15 minutter"}]},{"type":"actions","elements":[{"type":"button","text":{"type":"plain_text","text":"Logg 🤓","emoji":true},"url":"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"},{"type":"button","text":{"type":"plain_text","emoji":true,"text":"Kanseller 🤫"},"style":"danger","url":"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"}]}]}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+  deploy-production:
+    name: Production
+    needs: slack-post
+    uses: ./.github/workflows/subflow.deploy_package.yml
+    with:
+      ENV: Production
+      ENV_URL: https://ORG_URL.lightning.force.com
+      PACKAGE_ID: ${{ github.event.inputs.packageId }}
+    secrets:
+      PACKAGE_KEY: ${{ secrets.PACKAGE_KEY }}
+      SFDX_URL_ENV: ${{ secrets.SFDX_URL_ENV }}
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  # ################################################################### #
+
+  deploy-uat:
+    name: uat
+    if: github.event.inputs.org == 'UAT'
+    uses: ./.github/workflows/subflow.deploy_package.yml
+    with:
+      ENV: UAT
+      ENV_URL: https://ORG_URL--uat.lightning.force.com
+      PACKAGE_ID: ${{ github.event.inputs.packageId }}
+    secrets:
+      PACKAGE_KEY: ${{ secrets.PACKAGE_KEY }}
+      SFDX_URL_ENV: ${{ secrets.SFDX_URL_ENV }}
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  # ################################################################### #
+
+  deploy-dev:
+    name: dev
+    if: github.event.inputs.org == 'Dev'
+    uses: ./.github/workflows/subflow.deploy_package.yml
+    with:
+      ENV: Dev
+      ENV_URL: https://ORG_URL--dev.lightning.force.com
+      PACKAGE_ID: ${{ github.event.inputs.packageId }}
+    secrets:
+      PACKAGE_KEY: ${{ secrets.PACKAGE_KEY }}
+      SFDX_URL_ENV: ${{ secrets.SFDX_URL_ENV }}
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

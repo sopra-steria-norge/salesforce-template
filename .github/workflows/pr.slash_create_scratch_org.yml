@@ -1,0 +1,197 @@
+name: "[PR] Create Scratch Org"
+on:
+  repository_dispatch:
+    types: [build-command]
+jobs:
+  setup:
+    name: Create Scratch Org
+    runs-on: ubuntu-latest
+    steps:
+      # Checkout source code
+      - name: Checkout source code
+        uses: actions/checkout@v2
+      
+      # Create/Set branch
+      - name: Create/Set branch
+        run: git pull && git checkout -B ${{ github.event.client_payload.pull_request.head.ref }} && git pull origin ${{ github.event.client_payload.pull_request.head.ref }}
+
+      # Install SFDX
+      - name: Install SFDX
+        uses: sfdx-actions/setup-sfdx@v1
+      
+      # Authenticate dev hub
+      - name: Authenticate Dev Hub
+        run: |
+          echo ${{ secrets.SFDX_URL_DEVHUB }} > ./SFDX_URL_DEVHUB.txt
+          sfdx auth:sfdxurl:store -f ./SFDX_URL_DEVHUB.txt -a devhub -d
+          rm -f ./SFDX_URL_DEVHUB.txt
+      
+      # Create scratch org
+      - name: Create scratch org
+        run: sfdx force:org:create -f config/project-scratch-def.json -a scratch-org -s -d 1
+      
+      # Set SCRATCH_ORG_SFDX_AUTH_URL.txt
+      # ! saves sfdx auth url as artifact to circumvent GitHub Actions censoring of the value (which occurs when used with job output)
+      - name: Set SCRATCH_ORG_SFDX_AUTH_URL.txt
+        id: set-auth-url
+        run: sfdx force:org:display -u scratch-org --verbose --json | jq -r '.result.sfdxAuthUrl' > SCRATCH_ORG_SFDX_AUTH_URL.txt
+      
+      # Upload SCRATCH_ORG_SFDX_AUTH_URL.txt
+      - name: Upload SFDX AuthUrl
+        uses: actions/upload-artifact@v2
+        with:
+          name: sfdx-auth-url
+          path: SCRATCH_ORG_SFDX_AUTH_URL.txt
+      
+      # Install sfpowerkit plugin used to install multiple packages only by version number
+      - name: Install sfpowerkit plugin
+        run: echo y | sfdx plugins:install sfpowerkit@2.0.1
+
+      # Get package keys
+      - name: Get package keys
+        id: install-keys
+        run: |
+          keys=""
+          for p in $(jq '.result | .[].Name' -r <<< "$(sfdx force:package:list --json)"); do
+              keys+=$p":${{ secrets.PACKAGE_KEY }} "
+          done
+
+          echo "::set-output name=keys::$(echo $keys)"
+      
+      # Install packages this repo is dependant on
+      - name: Install dependant packages
+        run: sfdx sfpowerkit:package:dependencies:install -u scratch-org -r -a -w 60 -k '${{ steps.install-keys.outputs.keys }}'
+      
+      # Deploy source to scratch org
+      - name: Push source to scratch org
+        run: sfdx force:source:push
+
+      # Assign Permission Sets
+      - name: Assign Permission Sets
+        run: |
+          sleep 30
+          for permset in $(jq -r '.permsets_to_assign | values | .[]' ./config/ssdx-config.json); do
+            sfdx force:user:permset:assign -n $permset -u scratch-org &> /dev/null
+            echo "Assigned permission set '$permset'"
+          done
+      
+      # Post Error
+      - name: Post Error
+        if: failure()
+        uses: peter-evans/create-or-update-comment@v1
+        with:
+          issue-number: ${{ github.event.client_payload.pull_request.number }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          body: |
+            # :no_entry_sign: Failed to create Scratch Org.
+
+            See [logs](https://github.com/${{ github.repository }}/actions/workflows/slash_create_scratch_org.yml).
+
+            ![Error GIF](https://i.pinimg.com/originals/ef/8b/bd/ef8bbd4554dedcc2fd1fd15ab0ebd7a1.gif)
+
+      # Add error reaction 
+      - name: Add Error Reaction
+        if: failure()
+        uses: peter-evans/create-or-update-comment@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.event.client_payload.github.payload.repository.full_name }}
+          comment-id: ${{ github.event.client_payload.github.payload.comment.id }}
+          reaction-type: confused, -1
+
+  # ################################################################### #
+
+  post-login-to-PR:
+    name: Post login to Pull Request
+    needs: setup
+    runs-on: ubuntu-latest
+    steps:
+
+      # Checkout
+      - name: Checkout
+        uses: actions/checkout@v2
+  
+      # Prepare to Authenticate
+      - name: Prepare to Authenticate
+        uses: actions/download-artifact@v2
+        with:
+          name: sfdx-auth-url
+      
+      # Authenticate
+      - name: Authenticate
+        run: |
+          wget https://developer.salesforce.com/media/salesforce-cli/sfdx-linux-amd64.tar.xz
+          mkdir sfdx-cli
+          tar xJf sfdx-linux-amd64.tar.xz -C sfdx-cli --strip-components 1
+          ./sfdx-cli/install
+          
+          echo ${{ secrets.SFDX_URL_DEVHUB }} > ./SFDX_URL_DEVHUB.txt
+          sfdx auth:sfdxurl:store -f ./SFDX_URL_DEVHUB.txt -a devhub -d
+          rm -f ./SFDX_URL_DEVHUB.txt
+
+          sfdx auth:sfdxurl:store -f ./SCRATCH_ORG_SFDX_AUTH_URL.txt -a scratch-org -s
+
+      # Create body
+      - name: Create body
+        id: body_string
+        run: |
+          URL="$(sfdx force:user:display -u scratch-org --json | jq -r '.result.loginUrl')/?un=$(sfdx force:user:display -u scratch-org --json | jq -r '.result.username')"
+          INSTANT_URL="$(sfdx force:org:open -u scratch-org -r --json | jq -r '.result.url')"
+
+          MY_STRING="
+          ## Scratch Org for ${{ github.event.client_payload.pull_request.head.ref }}
+          
+          | Instant Login (only works 1h) | [Link]($INSTANT_URL) |
+          | :-- | :-- |
+          | **Backup Login** | [Link]($URL) |
+          | **Username** | $(sfdx force:user:display -u scratch-org --json | jq -r '.result.username') |
+          | **Password** | $(sfdx force:user:password:generate -u scratch-org --json | jq -r '.result.password') |
+          
+          :warning: The scratch org is deleted after 24 hours."
+
+          MY_STRING="${MY_STRING//'%'/'%25'}"
+          MY_STRING="${MY_STRING//$'\n'/'%0A'}"
+          MY_STRING="${MY_STRING//$'\r'/'%0D'}"
+
+          echo "::set-output name=content::$MY_STRING"
+
+      # Post Login
+      - name: Post Login
+        uses: peter-evans/create-or-update-comment@v1
+        with:
+          issue-number: ${{ github.event.client_payload.pull_request.number }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          body: ${{ steps.body_string.outputs.content }}
+      
+      # Add success reaction 
+      - name: Add reaction
+        uses: peter-evans/create-or-update-comment@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.event.client_payload.github.payload.repository.full_name }}
+          comment-id: ${{ github.event.client_payload.github.payload.comment.id }}
+          reaction-type: hooray
+
+      # Post Error
+      - name: Post Error
+        if: failure()
+        uses: peter-evans/create-or-update-comment@v1
+        with:
+          issue-number: ${{ github.event.client_payload.pull_request.number }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          body: |
+            # :no_entry_sign: Failed to post Scratch Org login.
+
+            See [logs](https://github.com/${{ github.repository }}/actions/workflows/slash_create_scratch_org.yml).
+
+            ![Error GIF](https://i.pinimg.com/originals/ef/8b/bd/ef8bbd4554dedcc2fd1fd15ab0ebd7a1.gif)
+
+      # Add error reaction 
+      - name: Add Error Reaction
+        if: failure()
+        uses: peter-evans/create-or-update-comment@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.event.client_payload.github.payload.repository.full_name }}
+          comment-id: ${{ github.event.client_payload.github.payload.comment.id }}
+          reaction-type: confused, -1

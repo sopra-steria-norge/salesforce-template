@@ -1,0 +1,16 @@
+# Bugs (cannot be pushed)
+# ----------------------------------------------------------------------------------------
+AppSwitcher.appMenu
+**/navigationMenus/*
+**/profiles/*
+
+# English translations
+# ----------------------------------------------------------------------------------------
+**/objectTranslations/*-en_US/*
+
+# Unneeded metadata
+# ----------------------------------------------------------------------------------------
+**/profilePasswordPolicies/*
+**/profileSessionSettings/*
+**/jsconfig.json
+**/.eslintrc.json

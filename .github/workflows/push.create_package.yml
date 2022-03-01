@@ -1,0 +1,177 @@
+name: "[PUSH] Create Package"
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+      - uat
+      - dev 
+    paths:
+      - "force-app/**"
+jobs:
+
+  create-package:
+    name: Create Package
+    runs-on: ubuntu-latest
+    steps:
+      # Checkout source code
+      - name: Checkout source code
+        uses: actions/checkout@v2
+
+      # Install SFDX
+      - name: Install SFDX
+        uses: sfdx-actions/setup-sfdx@v1
+
+      # Authenticate DevHub
+      - name: Authenticate DevHub
+        run: |
+          echo ${{ secrets.SFDX_URL_DEVHUB }} > ./SFDX_URL_DEVHUB.txt
+          sfdx auth:sfdxurl:store -f ./SFDX_URL_DEVHUB.txt -a devhub -d
+          rm -f ./SFDX_URL_DEVHUB.txt
+
+      # Delete unpackagable and scratch-org folder
+      - name: Delete unpackagable
+        run: |
+          rm -rf ./force-app/unpackagable
+          rm -rf ./force-app/unpackagable-with-auto-deploy
+
+      # Create package version
+      - name: Create package version
+        id: package-version-create
+        run: |
+          packageName=$(cat sfdx-project.json | jq '.packageDirectories | map(select(.package != null))[0].package' -r)
+
+          # ! full package creation in master branch, quick package on uat and dev
+          if [ ${{ github.ref_name }} == "master" ]; then
+            sfdx force:package:version:create --definitionfile config/project-scratch-def.json --package $packageName --installationkey ${{ secrets.PACKAGE_KEY }} --wait 45 --codecoverage --json | tee output
+          else
+            sfdx force:package:version:create --definitionfile config/project-scratch-def.json --package $packageName --installationkey ${{ secrets.PACKAGE_KEY }} --wait 20 --skipvalidation --branch ${{ github.ref_name }} --json | tee output
+          fi
+
+          # ! manually cancel the process if the package failed to be created
+          if [ $(cat output |jq '.status') == "1" ]; then
+            exit 125
+          fi
+
+          packageId=$(cat output | jq -r '.result.SubscriberPackageVersionId')
+          echo "::set-output name=packageId::$(echo $packageId)"
+          echo "::set-output name=betaVersionNumber::$(cat sfdx-project.json | jq -r '.packageAliases | keys_unsorted[-1]' | sed 's/.*-//')"
+          echo "::set-output name=codeCoverage::$( sfdx force:package:version:report -p $(echo $packageId) --json | jq -r '.result.CodeCoverage.apexCodeCoveragePercentage' )"
+
+          echo
+          echo Package ID: $packageId
+
+    outputs:
+      packageId: ${{ steps.package-version-create.outputs.packageId }}
+      betaVersionNumber: ${{ steps.package-version-create.outputs.betaVersionNumber }}
+      codeCoverage: ${{ steps.package-version-create.outputs.codeCoverage }}
+
+  # ################################################################### #
+
+  system-integration-testing:
+    name: SIT
+    if: github.ref_name == 'master'
+    needs: [create-package]
+    uses: ./.github/workflows/subflow.deploy_package.yml
+    with:
+      ENV: SIT
+      ENV_URL: https://ORG_URL--sit.lightning.force.com
+      PACKAGE_ID: ${{ needs.create-package.outputs.packageId }}
+    secrets:
+      PACKAGE_KEY: ${{ secrets.PACKAGE_KEY }}
+      SFDX_URL_ENV: ${{ secrets.SFDX_URL_ENV }}
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+
+  deploy-uat:
+    name: UAT
+    if: github.ref_name == 'uat'
+    needs: [create-package]
+    uses: ./.github/workflows/subflow.deploy_package.yml
+    with:
+      ENV: UAT
+      ENV_URL: https://ORG_URL--uat.lightning.force.com
+      PACKAGE_ID: ${{ needs.create-package.outputs.packageId }}
+    secrets:
+      PACKAGE_KEY: ${{ secrets.PACKAGE_KEY }}
+      SFDX_URL_ENV: ${{ secrets.SFDX_URL_ENV }}
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+
+  deploy-dev:
+    name: Dev
+    if: github.ref_name == 'dev'
+    needs: [create-package]
+    uses: ./.github/workflows/subflow.deploy_package.yml
+    with:
+      ENV: Dev
+      ENV_URL: https://ORG_URL--dev.lightning.force.com
+      PACKAGE_ID: ${{ needs.create-package.outputs.packageId }}
+    secrets:
+      PACKAGE_KEY: ${{ secrets.PACKAGE_KEY }}
+      SFDX_URL_ENV: ${{ secrets.SFDX_URL_ENV }}
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+
+  # ################################################################### #
+
+  create-release:
+    name: Create Release
+    needs: [create-package, system-integration-testing]
+    if: always() && github.ref_name == 'master'
+    runs-on: ubuntu-latest
+    steps:
+      # Checkout source code
+      - name: Checkout source code
+        uses: actions/checkout@v2
+
+      # set release variables
+      - name: Set release fields
+        id: release-fields
+        run: |
+          versionNumber=$(cat sfdx-project.json | jq '.packageDirectories | map(select(.package != null))[0].versionNumber' -r | sed 's/.\{5\}$//')
+          betaVersionNumber=${{ needs.create-package.outputs.betaVersionNumber }}
+
+          echo "::set-output name=tagName::v$(echo $versionNumber)-beta$(echo $betaVersionNumber)"
+          echo "::set-output name=releaseName::$(echo $versionNumber)-beta$(echo $betaVersionNumber)"
+          echo "::set-output name=bodyVersion::$(echo $versionNumber).$(echo $betaVersionNumber)"
+          echo "::set-output name=bodyPackage::${{ needs.create-package.outputs.packageId }}"
+
+          echo "::set-output name=packageCreation::✅ Package created successfully"
+
+          if [ ${{ needs.system-integration-testing.outputs.successfullyInstalled }} == "true" ]; then
+            echo "::set-output name=integrationInstallation::✅ System Integration Testing (SIT) passed"
+          else
+            echo "::set-output name=integrationInstallation::❌ System Integration Testing (SIT) failed"
+          fi
+
+      # Generate changelog from commits
+      - name: Generate changelog
+        id: changelog
+        uses: metcalfc/changelog-generator@v3.0.0
+        with:
+          myToken: ${{ secrets.GITHUB_TOKEN }}
+
+      # create github release
+      - name: Create Release
+        uses: actions/create-release@latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.release-fields.outputs.tagName }}
+          release_name: ${{ steps.release-fields.outputs.releaseName }}
+          body: |
+            **Version**: ${{ steps.release-fields.outputs.bodyVersion }}
+            **Package ID**: ${{ steps.release-fields.outputs.bodyPackage }} ([deployment tool](https://github.com/${{ github.repository }}/actions/workflows/manual.deployment_tool.yml))
+            **Code Coverage**: ${{ needs.create-package.outputs.codeCoverage }}%
+
+            **Created By**: [${{ github.actor }}](https://github.com/${{ github.actor }})
+
+            ${{ steps.release-fields.outputs.packageCreation }}
+            ${{ steps.release-fields.outputs.integrationInstallation }}
+
+            ## Changelog
+
+            ${{ steps.changelog.outputs.changelog }}
+          draft: false
+          prerelease: true

@@ -1,0 +1,101 @@
+name: "[SUBFLOW] Deploy"
+on:
+  workflow_call:
+    inputs:
+      ENV:
+        required: true
+        type: string
+      ENV_URL:
+        required: true
+        type: string
+      PACKAGE_ID:
+        required: true
+        type: string
+      # COMPILE_TYPE:
+      #   required: true
+      #   type: string
+    outputs:
+      successfullyInstalled:
+        description: "Successful install"
+        value: ${{ jobs.deploy-package.outputs.successfullyInstalled }}
+      installOutput:
+        description: "Install output log"
+        value: ${{ jobs.deploy-package.outputs.installOutput }}
+    secrets:
+      PACKAGE_KEY:
+        required: true
+      SFDX_URL_ENV:
+        required: true
+      SLACK_WEBHOOK_URL:
+        required: true
+
+jobs:
+  deploy-package:
+    name: deploy
+    environment: 
+      name: ${{ inputs.ENV }}
+      url: ${{ inputs.ENV_URL }}
+    runs-on: ubuntu-latest
+    steps:
+      # Checkout source code
+      - name: Checkout source code from master
+        uses: actions/checkout@v2
+
+      # Authorize SFDX
+      - name: Authorize SFDX
+        uses: sfdx-actions/setup-sfdx@v1
+        with:
+          sfdx-auth-url: ${{ secrets.SFDX_URL_ENV }}
+
+      # Install package in target org
+      - name: Install package in target org
+        id: deployment
+        run: |
+          sfdx force:package:install --package ${{ inputs.PACKAGE_ID }} --installationkey ${{ secrets.PACKAGE_KEY }} --wait 20 --publishwait 20 --noprompt --json | tee output
+
+          echo "::set-output name=installOutput::$(cat output | jq '.message')"
+          if [ $(cat output | jq '.status') == "0" ]; then
+            echo "::set-output name=successfullyInstalled::true"
+          fi
+
+      # Deploy unpackagable content
+      - name: Deploy unpackagable content
+        run: |
+          if [ -d "./force-app/unpackagable-with-auto-deploy" ]; then
+            echo "Starting deployment of ./force-app/unpackagable-with-auto-deploy"
+            sfdx force:source:deploy --sourcepath ./force-app/unpackagable-with-auto-deploy --testlevel RunLocalTests
+          fi
+          
+      # Report status
+      - name: Report Status
+        id: report
+        if: always()
+        run: |
+          if [ ${{ steps.deployment.outputs.successfullyInstalled }} == "true" ]; then
+            echo
+            echo ":white_check_mark: SUCCESSFUL INSTALLATION OF PACKAGE"
+          echo "::set-output name=status::✅ Suksess"
+          else
+            echo
+            echo ":x: FAILED INSTALLATION OF PACKAGE"
+            echo ${{ steps.deployment.outputs.installOutput }}
+            echo "::set-output name=status::❌ ${{ steps.deployment.outputs.installOutput }}"
+            exit 125
+          fi
+          
+          echo "::set-output name=tagName::v$(cat sfdx-project.json | jq '.packageDirectories | map(select(.package != null))[0].versionNumber' -r | sed 's/.\{5\}$//')"
+
+      # Post to Slack
+      - name: Post to Slack
+        if: always() && inputs.ENV == 'Production'
+        uses: slackapi/slack-github-action@v1.18.0
+        with:
+          payload: |
+            {"blocks":[{"type":"header","text":{"type":"plain_text","text":"🏁 Deployment Fullført","emoji":true}},{"type":"section","text":{"type":"mrkdwn","text":"*Status:*\n${{ steps.report.outputs.status }}"}},{"type":"actions","elements":[{"type":"button","text":{"type":"plain_text","text":"Åpne ☁️","emoji":true},"style":"primary","url":"${{ inputs.ENV_URL }}"},{"type":"button","text":{"type":"plain_text","emoji":true,"text":"Se hva som er nytt  👀"},"url":"https://github.com/${{ github.repository }}/releases/tag/${{ steps.report.outputs.tagName }}"}]}]}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+          
+    outputs:
+      successfullyInstalled: ${{ steps.deployment.outputs.successfullyInstalled }}
+      installOutput: ${{ steps.deployment.outputs.installOutput }}

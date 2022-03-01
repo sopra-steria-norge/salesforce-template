@@ -1,0 +1,19 @@
+{
+    "orgName": "Org",
+    "edition": "Enterprise",
+    "release": "Current",
+    "adminEmail": "admin@test.com",
+    "features": [
+        "API"
+    ],
+    "country": "NO",
+    "language": "en_US",
+    "settings": {
+        "lightningExperienceSettings": {
+            "enableS1DesktopEnabled": false
+        },
+        "languageSettings": {
+            "enableTranslationWorkbench": true
+        }
+    }
+}

@@ -1,0 +1,19 @@
+name: "[PR] Comment"
+on:
+  pull_request:
+    types: opened
+jobs:
+  post-info:
+    name: Post PR Comment
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post Command Prompts
+        uses: peter-evans/create-or-update-comment@v1
+        with:
+          issue-number: ${{ github.event.number }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          body: |
+            Post a comment using the following commands:
+
+            - `/build` creates a new scratch org from this branch/PR
+      

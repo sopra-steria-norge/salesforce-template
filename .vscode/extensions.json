@@ -1,0 +1,23 @@
+{
+    "recommendations": [
+        "salesforce.salesforcedx-vscode",
+        "aaron-bond.better-comments",
+        "coenraads.bracket-pair-colorizer-2",
+        "dbaeumer.vscode-eslint",
+        "eamodio.gitlens",
+        "hnw.vscode-auto-open-markdown-preview",
+        "ibm.output-colorizer",
+        "redhat.vscode-xml",
+        "vignaeshrama.sfdx-package-xml-generator",
+        "nik-creation.lwc-salesforce",
+        "esbenp.prettier-vscode",
+        "allanoricil.salesforce-soql-editor",
+        "mechatroner.rainbow-csv",
+        "drossi750.vscode-salesforce-toolkit",
+        "salesforce.salesforce-vscode-slds",
+        "salesforce.salesforcedx-vscode-soql",
+        "rbalet.vscode-sorting-attrs",
+        "vscode-icons-team.vscode-icons",
+        "vscjava.vscode-java-pack"
+    ]
+}
